@@ -1,0 +1,17 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {initial,validateState,validDate,safeUrl,scoreJob,metrics,rankedJobs,exportCsv,sampleState,STATUSES} from '../site/domain.mjs';
+test('empty schema is safe',()=>{let s=validateState(initial());assert.equal(s.schema,1);assert.deepEqual(s.jobs,[])});
+test('dates reject impossible values',()=>{assert.equal(validDate('2028-02-29'),true);assert.equal(validDate('2027-02-29'),false);assert.equal(validDate('2026-11-31'),false)});
+test('external URL rejects javascript and credentials',()=>{assert.equal(safeUrl('javascript:alert(1)'),'');assert.equal(safeUrl('https://a:b@example.com/'),'');assert.ok(safeUrl('https://example.com/job').startsWith('https:'))});
+test('sample data validates',()=>assert.equal(validateState(sampleState()).jobs.length,3));
+test('duplicate IDs are rejected',()=>{let s=sampleState();s.jobs.push({...s.jobs[0]});assert.throws(()=>validateState(s),/duplicate/)});
+test('orphan tasks rejected',()=>{let s=sampleState();s.tasks[0].jobId='missing';assert.throws(()=>validateState(s),/orphaned/)});
+test('job salary range order validated',()=>{let s=sampleState();s.jobs[0].salaryMax=20000;assert.throws(()=>validateState(s),/salary/)});
+test('fit score reflects weighted available checks',()=>{let s=sampleState();let a=scoreJob(s.jobs[0],s.profile),b=scoreJob(s.jobs[2],s.profile);assert.ok(a.score>b.score);assert.ok(a.coverage>0)});
+test('unknown fields do not manufacture confidence',()=>{let j=sampleState().jobs[0];j.location='';j.salaryMin=0;j.salaryMax=0;j.mode='unknown';j.contract='unknown';let p={targetSalary:32000,locations:[],skills:[],modes:[],contracts:[]};assert.equal(scoreJob(j,p).score,null);assert.equal(scoreJob(j,p).coverage,0)});
+test('ranking honours status and query',()=>{let s=sampleState();assert.deepEqual(rankedJobs(s,'interview').map(x=>x.id),['sample_b']);assert.deepEqual(rankedJobs(s,'all','Oxford').map(x=>x.id),['sample_c'])});
+test('tasks and pipeline metrics',()=>{let m=metrics(sampleState(),'2026-11-08');assert.equal(m.total,3);assert.equal(m.interviews,1);assert.equal(m.pendingTasks,1);assert.equal(m.overdueTasks,1)});
+test('CSV escapes formulas and quotes',()=>{let s=sampleState();s.jobs[0].notes='=HYPERLINK("evil")';let csv=exportCsv(s);assert.ok(csv.includes("'=HYPERLINK"));assert.ok(csv.includes('""evil""'))});
+test('bad schema and large payload rejected',()=>{assert.throws(()=>validateState({schema:2,profile:{},jobs:[],tasks:[]}));let s=initial();s.jobs=new Array(501).fill({});assert.throws(()=>validateState(s),/limit/)});
+test('unsupported status normalises safely',()=>{let s=sampleState();s.jobs[0].status='unknown';assert.equal(validateState(s).jobs[0].status,STATUSES[0])});
